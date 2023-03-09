@@ -8,6 +8,7 @@
  * Copyright (C) 2019 Mohit Bhasi <mohitbhasi1998@gmail.com>
  * Copyright (C) 2019 Leslie Monis <lesliemonis@gmail.com>
  * Copyright (C) 2019 Gautam Ramakrishnan <gautamramk@gmail.com>
+ * Copyright (C) 2022 Dominik Strnad <litinoveweedle@gmail.com>
  */
 
 #include <stdio.h>
@@ -283,25 +284,44 @@ static int fq_pie_print_xstats(struct qdisc_util *qu, FILE *f,
 		st = &_st;
 	}
 
-	print_uint(PRINT_ANY, "pkts_in", "  pkts_in %u",
-		   st->packets_in);
-	print_uint(PRINT_ANY, "overlimit", " overlimit %u",
-		   st->overlimit);
-	print_uint(PRINT_ANY, "overmemory", " overmemory %u",
-		   st->overmemory);
-	print_uint(PRINT_ANY, "dropped", " dropped %u",
-		   st->dropped);
-	print_uint(PRINT_ANY, "ecn_mark", " ecn_mark %u",
-		   st->ecn_mark);
-	print_nl();
-	print_uint(PRINT_ANY, "new_flow_count", "  new_flow_count %u",
-		   st->new_flow_count);
-	print_uint(PRINT_ANY, "new_flows_len", " new_flows_len %u",
-		   st->new_flows_len);
-	print_uint(PRINT_ANY, "old_flows_len", " old_flows_len %u",
-		   st->old_flows_len);
-	print_uint(PRINT_ANY, "memory_used", " memory_used %u",
-		   st->memory_usage);
+	if (st->type == TCA_FQ_PIE_XSTATS_QDISC) {
+		print_uint(PRINT_ANY, "pkts_in", "  pkts_in %u",
+			st->qdisc_stats.packets_in);
+		print_uint(PRINT_ANY, "overlimit", " overlimit %u",
+			st->qdisc_stats.overlimit);
+		print_uint(PRINT_ANY, "overmemory", " overmemory %u",
+			st->qdisc_stats.overmemory);
+		print_uint(PRINT_ANY, "dropped", " dropped %u",
+			st->qdisc_stats.dropped);
+		print_uint(PRINT_ANY, "ecn_mark", " ecn_mark %u",
+			st->qdisc_stats.ecn_mark);
+		print_nl();
+		print_uint(PRINT_ANY, "new_flow_count", "  new_flow_count %u",
+			st->qdisc_stats.new_flow_count);
+		print_uint(PRINT_ANY, "new_flows_len", " new_flows_len %u",
+			st->qdisc_stats.new_flows_len);
+		print_uint(PRINT_ANY, "old_flows_len", " old_flows_len %u",
+			st->qdisc_stats.old_flows_len);
+		print_uint(PRINT_ANY, "memory_used", " memory_used %u",
+			st->qdisc_stats.memory_usage);
+	}
+
+	if (st->type == TCA_FQ_PIE_XSTATS_CLASS) {
+		print_int(PRINT_ANY, "deficit", "  deficit %d",
+			st->class_stats.deficit);
+		print_u64(PRINT_ANY, "qdelay", " qdelay %llu",
+		    st->class_stats.qdelay);
+		print_u64(PRINT_ANY, "burst_time", " burst_time %llu",
+		    st->class_stats.burst_time);
+		print_u64(PRINT_ANY, "drop_prob", " drop_prob %llu",
+		    st->class_stats.prob);
+		print_u64(PRINT_ANY, "accu_drop_pro", " accu_drop_pro %llu",
+		    st->class_stats.accu_prob);
+		print_u64(PRINT_ANY, "dq_count", " dq_count %llu",
+		    st->class_stats.dq_count);
+		print_int(PRINT_ANY, "avg_dq_rate", "  avg_dq_rate %d",
+			st->class_stats.avg_dq_rate);
+	}
 
 	return 0;
 
