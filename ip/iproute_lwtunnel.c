@@ -32,7 +32,7 @@
 #include <linux/ioam6.h>
 #include <linux/ioam6_iptunnel.h>
 
-static const char *format_encap_type(int type)
+static const char *format_encap_type(uint16_t type)
 {
 	switch (type) {
 	case LWTUNNEL_ENCAP_MPLS:
@@ -62,7 +62,7 @@ static const char *format_encap_type(int type)
 
 static void encap_type_usage(void)
 {
-	int i;
+	uint16_t i;
 
 	fprintf(stderr, "Usage: ip route ... encap TYPE [ OPTIONS ] [...]\n");
 
@@ -73,7 +73,7 @@ static void encap_type_usage(void)
 	exit(-1);
 }
 
-static int read_encap_type(const char *name)
+static uint16_t read_encap_type(const char *name)
 {
 	if (strcmp(name, "mpls") == 0)
 		return LWTUNNEL_ENCAP_MPLS;
@@ -140,7 +140,7 @@ static const char *seg6_mode_types[] = {
 
 static const char *format_seg6mode_type(int mode)
 {
-	if (mode < 0 || mode > ARRAY_SIZE(seg6_mode_types))
+	if (mode < 0 || mode >= ARRAY_SIZE(seg6_mode_types))
 		return "<unknown>";
 
 	return seg6_mode_types[mode];
@@ -834,14 +834,15 @@ static void print_encap_xfrm(FILE *fp, struct rtattr *encap)
 void lwt_print_encap(FILE *fp, struct rtattr *encap_type,
 			  struct rtattr *encap)
 {
-	int et;
+	uint16_t et;
 
 	if (!encap_type)
 		return;
 
 	et = rta_getattr_u16(encap_type);
-
-	print_string(PRINT_ANY, "encap", " encap %s ", format_encap_type(et));
+	open_json_object("encap");
+	print_string(PRINT_ANY, "encap_type", " encap %s ",
+		     format_encap_type(et));
 
 	switch (et) {
 	case LWTUNNEL_ENCAP_MPLS:
@@ -875,6 +876,7 @@ void lwt_print_encap(FILE *fp, struct rtattr *encap_type,
 		print_encap_xfrm(fp, encap);
 		break;
 	}
+	close_json_object();
 }
 
 static struct ipv6_sr_hdr *parse_srh(char *segbuf, int hmac, bool encap)
@@ -898,6 +900,9 @@ static struct ipv6_sr_hdr *parse_srh(char *segbuf, int hmac, bool encap)
 		srhlen += 40;
 
 	srh = malloc(srhlen);
+	if (srh == NULL)
+		return NULL;
+
 	memset(srh, 0, srhlen);
 
 	srh->hdrlen = (srhlen >> 3) - 1;
@@ -933,14 +938,14 @@ static int parse_encap_seg6(struct rtattr *rta, size_t len, int *argcp,
 			    char ***argvp)
 {
 	int mode_ok = 0, segs_ok = 0, hmac_ok = 0;
-	struct seg6_iptunnel_encap *tuninfo;
+	struct seg6_iptunnel_encap *tuninfo = NULL;
 	struct ipv6_sr_hdr *srh;
 	char **argv = *argvp;
 	char segbuf[1024] = "";
 	int argc = *argcp;
 	int encap = -1;
 	__u32 hmac = 0;
-	int ret = 0;
+	int ret = -1;
 	int srhlen;
 
 	while (argc > 0) {
@@ -959,7 +964,7 @@ static int parse_encap_seg6(struct rtattr *rta, size_t len, int *argcp,
 				invarg("\"segs\" provided before \"mode\"\n",
 				       *argv);
 
-			strlcpy(segbuf, *argv, 1024);
+			strlcpy(segbuf, *argv, sizeof(segbuf));
 		} else if (strcmp(*argv, "hmac") == 0) {
 			NEXT_ARG();
 			if (hmac_ok++)
@@ -972,9 +977,13 @@ static int parse_encap_seg6(struct rtattr *rta, size_t len, int *argcp,
 	}
 
 	srh = parse_srh(segbuf, hmac, encap);
+	if (srh == NULL)
+		goto out;
 	srhlen = (srh->hdrlen + 1) << 3;
 
 	tuninfo = malloc(sizeof(*tuninfo) + srhlen);
+	if (tuninfo == NULL)
+		goto out;
 	memset(tuninfo, 0, sizeof(*tuninfo) + srhlen);
 
 	tuninfo->mode = encap;
@@ -982,13 +991,12 @@ static int parse_encap_seg6(struct rtattr *rta, size_t len, int *argcp,
 	memcpy(tuninfo->srh, srh, srhlen);
 
 	if (rta_addattr_l(rta, len, SEG6_IPTUNNEL_SRH, tuninfo,
-			  sizeof(*tuninfo) + srhlen)) {
-		ret = -1;
+			  sizeof(*tuninfo) + srhlen))
 		goto out;
-	}
 
 	*argcp = argc + 1;
 	*argvp = argv - 1;
+	ret = 0;
 
 out:
 	free(tuninfo);
@@ -1012,6 +1020,8 @@ static struct ipv6_rpl_sr_hdr *parse_rpl_srh(char *segbuf)
 	srhlen = 8 + 16 * nsegs;
 
 	srh = calloc(1, srhlen);
+	if (srh == NULL)
+		return NULL;
 
 	srh->hdrlen = (srhlen >> 3) - 1;
 	srh->type = 3;
@@ -1045,7 +1055,7 @@ static int parse_encap_rpl(struct rtattr *rta, size_t len, int *argcp,
 			if (segs_ok++)
 				duparg2("segs", *argv);
 
-			strlcpy(segbuf, *argv, 1024);
+			strlcpy(segbuf, *argv, sizeof(segbuf));
 		} else {
 			break;
 		}
@@ -1466,8 +1476,7 @@ static int parse_encap_seg6local(struct rtattr *rta, size_t len, int *argcp,
 			NEXT_ARG();
 			if (segs_ok++)
 				duparg2("segs", *argv);
-			strncpy(segbuf, *argv, 1024);
-			segbuf[1023] = 0;
+			strlcpy(segbuf, *argv, sizeof(segbuf));
 			if (!NEXT_ARG_OK())
 				break;
 			NEXT_ARG();

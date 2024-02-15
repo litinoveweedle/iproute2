@@ -353,6 +353,8 @@ static int vdpa_argv_parse(struct vdpa *vdpa, int argc, char **argv,
 						&opts->device_features);
 			if (err)
 				return err;
+
+			NEXT_ARG_FWD();
 			o_found |= VDPA_OPT_VDEV_FEATURES;
 		} else {
 			fprintf(stderr, "Unknown option \"%s\"\n", *argv);
@@ -986,7 +988,7 @@ static int cmd_dev_vstats_show(struct vdpa *vdpa, int argc, char **argv)
 	pr_out_section_start(vdpa, "vstats");
 	err = mnlu_gen_socket_sndrcv(&vdpa->nlg, nlh, cmd_dev_vstats_show_cb, vdpa);
 	pr_out_section_end(vdpa);
-	return 0;
+	return err;
 }
 
 static int cmd_dev_vstats(struct vdpa *vdpa, int argc, char **argv)

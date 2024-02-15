@@ -1379,10 +1379,10 @@ static int macsec_parse_opt(struct link_util *lu, int argc, char **argv,
 			if (strcmp(*argv, "default") == 0)
 				cipher.id = MACSEC_DEFAULT_CIPHER_ID;
 			else if (strcmp(*argv, "gcm-aes-128") == 0 ||
-			         strcmp(*argv, "GCM-AES-128") == 0)
+				 strcmp(*argv, "GCM-AES-128") == 0)
 				cipher.id = MACSEC_CIPHER_ID_GCM_AES_128;
 			else if (strcmp(*argv, "gcm-aes-256") == 0 ||
-			         strcmp(*argv, "GCM-AES-256") == 0)
+				 strcmp(*argv, "GCM-AES-256") == 0)
 				cipher.id = MACSEC_CIPHER_ID_GCM_AES_256;
 			else if (strcmp(*argv, "gcm-aes-xpn-128") == 0 ||
 				 strcmp(*argv, "GCM-AES-XPN-128") == 0)
@@ -1457,8 +1457,10 @@ static int macsec_parse_opt(struct link_util *lu, int argc, char **argv,
 				invarg("expected replay window size", *argv);
 		} else if (strcmp(*argv, "validate") == 0) {
 			NEXT_ARG();
-			validate = parse_one_of("validate", *argv, validate_str,
-						ARRAY_SIZE(validate_str), &ret);
+			validate = parse_one_of_deprecated("validate", *argv,
+							   validate_str,
+							   ARRAY_SIZE(validate_str),
+							   &ret);
 			if (ret != 0)
 				return ret;
 			addattr8(n, MACSEC_BUFLEN,

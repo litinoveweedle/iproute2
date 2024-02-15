@@ -49,8 +49,8 @@ static void explain(void)
 
 static void explain1(char *arg)
 {
-    fprintf(stderr, "Illegal \"%s\"\n", arg);
-    explain();
+	fprintf(stderr, "Illegal \"%s\"\n", arg);
+	explain();
 }
 
 static int htb_parse_opt(struct qdisc_util *qu, int argc,
@@ -224,7 +224,7 @@ static int htb_parse_class_opt(struct qdisc_util *qu, int argc, char **argv,
 	opt.ceil.rate = (ceil64 >= (1ULL << 32)) ? ~0U : ceil64;
 
 	/* compute minimal allowed burst from rate; mtu is added here to make
-	   sute that buffer is larger than mtu and to have some safeguard space */
+	   sure that buffer is larger than mtu and to have some safeguard space */
 	if (!buffer)
 		buffer = rate64 / get_hz() + mtu;
 	if (!cbuffer)

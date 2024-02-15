@@ -61,16 +61,16 @@ static void usage(void)
 	fprintf(stderr,
 		"Usage: ip [ OPTIONS ] OBJECT { COMMAND | help }\n"
 		"       ip [ -force ] -batch filename\n"
-		"where  OBJECT := { address | addrlabel | amt | fou | help | ila | ioam | l2tp |\n"
-		"                   link | macsec | maddress | monitor | mptcp | mroute | mrule |\n"
+		"where  OBJECT := { address | addrlabel | fou | help | ila | ioam | l2tp | link |\n"
+		"                   macsec | maddress | monitor | mptcp | mroute | mrule |\n"
 		"                   neighbor | neighbour | netconf | netns | nexthop | ntable |\n"
-		"                   ntbl | route | rule | sr | tap | tcpmetrics |\n"
+		"                   ntbl | route | rule | sr | stats | tap | tcpmetrics |\n"
 		"                   token | tunnel | tuntap | vrf | xfrm }\n"
 		"       OPTIONS := { -V[ersion] | -s[tatistics] | -d[etails] | -r[esolve] |\n"
 		"                    -h[uman-readable] | -iec | -j[son] | -p[retty] |\n"
 		"                    -f[amily] { inet | inet6 | mpls | bridge | link } |\n"
 		"                    -4 | -6 | -M | -B | -0 |\n"
-		"                    -l[oops] { maximum-addr-flush-attempts } | -br[ief] |\n"
+		"                    -l[oops] { maximum-addr-flush-attempts } | -echo | -br[ief] |\n"
 		"                    -o[neline] | -t[imestamp] | -ts[hort] | -b[atch] [filename] |\n"
 		"                    -rc[vbuf] [size] | -n[etns] name | -N[umeric] | -a[ll] |\n"
 		"                    -c[olor]}\n");
@@ -168,14 +168,14 @@ int main(int argc, char **argv)
 	const char *libbpf_version;
 	char *batch_file = NULL;
 	char *basename;
-	int color = 0;
+	int color = CONF_COLOR;
 
 	/* to run vrf exec without root, capabilities might be set, drop them
 	 * if not needed as the first thing.
 	 * execv will drop them for the child command.
 	 * vrf exec requires:
 	 * - cap_dac_override to create the cgroup subdir in /sys
-	 * - cap_sys_admin to load the BPF program
+	 * - cap_bpf to load the BPF program
 	 * - cap_net_admin to set the socket into the cgroup
 	 */
 	if (argc < 3 || strcmp(argv[1], "vrf") != 0 ||

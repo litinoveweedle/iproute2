@@ -37,11 +37,13 @@ static void print_explain(FILE *f)
 		"			[ mcast_to_unicast {on | off} ]\n"
 		"			[ group_fwd_mask MASK ]\n"
 		"			[ neigh_suppress {on | off} ]\n"
+		"			[ neigh_vlan_suppress {on | off} ]\n"
 		"			[ vlan_tunnel {on | off} ]\n"
 		"			[ isolated {on | off} ]\n"
 		"			[ locked {on | off} ]\n"
-		"                       [ mab {on | off} ]\n"
+		"			[ mab {on | off} ]\n"
 		"			[ backup_port DEVICE ] [ nobackup_port ]\n"
+		"			[ backup_nhid NHID ]\n"
 	);
 }
 
@@ -98,13 +100,20 @@ static void _bitmask2str(__u16 bitmask, char *dst, size_t dst_size,
 	int len, i;
 
 	for (i = 0, len = 0; bitmask; i++, bitmask >>= 1) {
+		int n;
+
 		if (bitmask & 0x1) {
 			if (tbl[i])
-				len += snprintf(dst + len, dst_size - len, "%s,",
+				n = snprintf(dst + len, dst_size - len, "%s,",
 						tbl[i]);
 			else
-				len += snprintf(dst + len, dst_size - len, "0x%x,",
+				n = snprintf(dst + len, dst_size - len, "0x%x,",
 						(1 << i));
+
+			if (n < 0 || n >= dst_size - len)
+				break;
+
+			len += n;
 		}
 	}
 
@@ -261,6 +270,11 @@ static void bridge_slave_print_opt(struct link_util *lu, FILE *f,
 		print_on_off(PRINT_ANY, "neigh_suppress", "neigh_suppress %s ",
 			     rta_getattr_u8(tb[IFLA_BRPORT_NEIGH_SUPPRESS]));
 
+	if (tb[IFLA_BRPORT_NEIGH_VLAN_SUPPRESS])
+		print_on_off(PRINT_ANY, "neigh_vlan_suppress",
+			     "neigh_vlan_suppress %s ",
+			     rta_getattr_u8(tb[IFLA_BRPORT_NEIGH_VLAN_SUPPRESS]));
+
 	if (tb[IFLA_BRPORT_GROUP_FWD_MASK]) {
 		char convbuf[256];
 		__u16 fwd_mask;
@@ -295,6 +309,10 @@ static void bridge_slave_print_opt(struct link_util *lu, FILE *f,
 		print_string(PRINT_ANY, "backup_port", "backup_port %s ",
 			     ll_index_to_name(backup_p));
 	}
+
+	if (tb[IFLA_BRPORT_BACKUP_NHID])
+		print_uint(PRINT_ANY, "backup_nhid", "backup_nhid %u ",
+			   rta_getattr_u32(tb[IFLA_BRPORT_BACKUP_NHID]));
 }
 
 static void bridge_slave_parse_on_off(char *arg_name, char *arg_val,
@@ -393,6 +411,10 @@ static int bridge_slave_parse_opt(struct link_util *lu, int argc, char **argv,
 			NEXT_ARG();
 			bridge_slave_parse_on_off("neigh_suppress", *argv, n,
 						  IFLA_BRPORT_NEIGH_SUPPRESS);
+		} else if (strcmp(*argv, "neigh_vlan_suppress") == 0) {
+			NEXT_ARG();
+			bridge_slave_parse_on_off("neigh_vlan_suppress", *argv,
+						  n, IFLA_BRPORT_NEIGH_VLAN_SUPPRESS);
 		} else if (matches(*argv, "group_fwd_mask") == 0) {
 			__u16 mask;
 
@@ -426,6 +448,14 @@ static int bridge_slave_parse_opt(struct link_util *lu, int argc, char **argv,
 			addattr32(n, 1024, IFLA_BRPORT_BACKUP_PORT, ifindex);
 		} else if (matches(*argv, "nobackup_port") == 0) {
 			addattr32(n, 1024, IFLA_BRPORT_BACKUP_PORT, 0);
+		} else if (strcmp(*argv, "backup_nhid") == 0) {
+			__u32 backup_nhid;
+
+			NEXT_ARG();
+			if (get_u32(&backup_nhid, *argv, 0))
+				invarg("backup_nhid is invalid", *argv);
+			addattr32(n, 1024, IFLA_BRPORT_BACKUP_NHID,
+				  backup_nhid);
 		} else if (matches(*argv, "help") == 0) {
 			explain();
 			return -1;

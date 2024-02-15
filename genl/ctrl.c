@@ -267,7 +267,7 @@ static int ctrl_list(int cmd, int argc, char **argv)
 
 		if (argc != 2) {
 			fprintf(stderr, "Wrong number of params\n");
-			return -1;
+			goto ctrl_done;
 		}
 
 		if (matches(*argv, "name") == 0) {
@@ -315,7 +315,7 @@ static int ctrl_list(int cmd, int argc, char **argv)
 
 		rtnl_dump_filter(&rth, print_ctrl2, stdout);
 
-        }
+	}
 
 	ret = 0;
 ctrl_done:
@@ -329,13 +329,14 @@ static int ctrl_listen(int argc, char **argv)
 	struct rtnl_handle rth;
 
 	if (rtnl_open_byproto(&rth, nl_mgrp(GENL_ID_CTRL), NETLINK_GENERIC) < 0) {
-		fprintf(stderr, "Canot open generic netlink socket\n");
+		fprintf(stderr, "Cannot open generic netlink socket\n");
 		return -1;
 	}
 
 	if (rtnl_listen(&rth, print_ctrl, (void *) stdout) < 0)
-		return -1;
-
+		exit(2);
+	
+	rtnl_close(&rth);	
 	return 0;
 }
 

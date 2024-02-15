@@ -62,7 +62,7 @@ static void act_usage(void)
 static int print_noaopt(struct action_util *au, FILE *f, struct rtattr *opt)
 {
 	if (opt && RTA_PAYLOAD(opt))
-		fprintf(f, "[Unknown action, optlen=%u] ",
+		fprintf(stderr, "[Unknown action, optlen=%u] ",
 			(unsigned int) RTA_PAYLOAD(opt));
 	return 0;
 }
@@ -83,7 +83,7 @@ static int parse_noaopt(struct action_util *au, int *argc_p,
 	return -1;
 }
 
-static struct action_util *get_action_kind(char *str)
+static struct action_util *get_action_kind(const char *str)
 {
 	static void *aBODY;
 	void *dlh;
@@ -123,7 +123,7 @@ noexist:
 #ifdef CONFIG_GACT
 	if (!looked4gact) {
 		looked4gact = 1;
-		strcpy(str, "gact");
+		str = "gact";
 		goto restart_s;
 	}
 #endif
@@ -586,7 +586,13 @@ int print_action(struct nlmsghdr *n, void *arg)
 
 	open_json_object(NULL);
 	tc_dump_action(fp, tb[TCA_ACT_TAB], tot_acts ? *tot_acts:0, false);
-	print_ext_msg(&tb[TCA_ACT_TAB]);
+
+	if (tb[TCA_ROOT_EXT_WARN_MSG]) {
+		print_string(PRINT_ANY, "warn", "%s",
+			     rta_getattr_str(tb[TCA_ROOT_EXT_WARN_MSG]));
+		print_nl();
+	}
+
 	close_json_object();
 
 	return 0;

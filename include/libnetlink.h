@@ -177,9 +177,6 @@ int rtnl_echo_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n, int json,
 int rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 	      struct nlmsghdr **answer)
 	__attribute__((warn_unused_result));
-int rtnl_talk_iov(struct rtnl_handle *rtnl, struct iovec *iovec, size_t iovlen,
-		  struct nlmsghdr **answer)
-	__attribute__((warn_unused_result));
 int rtnl_talk_suppress_rtnl_errmsg(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 				   struct nlmsghdr **answer)
 	__attribute__((warn_unused_result));
@@ -277,6 +274,10 @@ static inline __s64 rta_getattr_s64(const struct rtattr *rta)
 static inline const char *rta_getattr_str(const struct rtattr *rta)
 {
 	return (const char *)RTA_DATA(rta);
+}
+static inline int rta_type(const struct rtattr *rta)
+{
+	return rta->rta_type & NLA_TYPE_MASK;
 }
 
 int rtnl_listen_all_nsid(struct rtnl_handle *);

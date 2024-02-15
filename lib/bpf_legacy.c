@@ -18,6 +18,7 @@
 #include <stdarg.h>
 #include <limits.h>
 #include <assert.h>
+#include <libgen.h>
 
 #ifdef HAVE_ELF
 #include <libelf.h>
@@ -971,8 +972,8 @@ int bpf_load_common(struct bpf_cfg_in *cfg, const struct bpf_cfg_ops *ops,
 		ops->cbpf_cb(nl, cfg->opcodes, cfg->n_opcodes);
 	if (cfg->mode == EBPF_OBJECT || cfg->mode == EBPF_PINNED) {
 		snprintf(annotation, sizeof(annotation), "%s:[%s]",
-			 basename(cfg->object), cfg->mode == EBPF_PINNED ?
-			 "*fsobj" : cfg->section);
+			 basename(strdupa(cfg->object)),
+			 cfg->mode == EBPF_PINNED ? "*fsobj" : cfg->section);
 		ops->ebpf_cb(nl, cfg->prog_fd, annotation);
 	}
 
@@ -1098,7 +1099,7 @@ int bpf_prog_detach_fd(int target_fd, enum bpf_attach_type type)
 
 int bpf_prog_load_dev(enum bpf_prog_type type, const struct bpf_insn *insns,
 		      size_t size_insns, const char *license, __u32 ifindex,
-		      char *log, size_t size_log)
+		      char *log, size_t size_log, bool verbose)
 {
 	union bpf_attr attr = {};
 
@@ -1112,6 +1113,8 @@ int bpf_prog_load_dev(enum bpf_prog_type type, const struct bpf_insn *insns,
 		attr.log_buf = bpf_ptr_to_u64(log);
 		attr.log_size = size_log;
 		attr.log_level = 1;
+		if (verbose)
+			attr.log_level |= 2;
 	}
 
 	return bpf(BPF_PROG_LOAD, &attr, sizeof(attr));
@@ -1119,9 +1122,9 @@ int bpf_prog_load_dev(enum bpf_prog_type type, const struct bpf_insn *insns,
 
 int bpf_program_load(enum bpf_prog_type type, const struct bpf_insn *insns,
 		     size_t size_insns, const char *license, char *log,
-		     size_t size_log)
+		     size_t size_log, bool verbose)
 {
-	return bpf_prog_load_dev(type, insns, size_insns, license, 0, log, size_log);
+	return bpf_prog_load_dev(type, insns, size_insns, license, 0, log, size_log, verbose);
 }
 
 #ifdef HAVE_ELF
@@ -1543,7 +1546,7 @@ retry:
 	errno = 0;
 	fd = bpf_prog_load_dev(prog->type, prog->insns, prog->size,
 			       prog->license, ctx->ifindex,
-			       ctx->log, ctx->log_size);
+			       ctx->log, ctx->log_size, ctx->verbose);
 	if (fd < 0 || ctx->verbose) {
 		/* The verifier log is pretty chatty, sometimes so chatty
 		 * on larger programs, that we could fail to dump everything
@@ -2751,7 +2754,7 @@ static bool bpf_pinning_reserved(uint32_t pinning)
 	}
 }
 
-static void bpf_hash_init(struct bpf_elf_ctx *ctx, const char *db_file)
+static int bpf_hash_init(struct bpf_elf_ctx *ctx, const char *db_file)
 {
 	struct bpf_hash_entry *entry;
 	char subpath[PATH_MAX] = {};
@@ -2761,14 +2764,14 @@ static void bpf_hash_init(struct bpf_elf_ctx *ctx, const char *db_file)
 
 	fp = fopen(db_file, "r");
 	if (!fp)
-		return;
+		return -errno;
 
 	while ((ret = bpf_read_pin_mapping(fp, &pinning, subpath))) {
 		if (ret == -1) {
 			fprintf(stderr, "Database %s is corrupted at: %s\n",
 				db_file, subpath);
 			fclose(fp);
-			return;
+			return -EINVAL;
 		}
 
 		if (bpf_pinning_reserved(pinning)) {
@@ -2796,6 +2799,8 @@ static void bpf_hash_init(struct bpf_elf_ctx *ctx, const char *db_file)
 	}
 
 	fclose(fp);
+
+	return 0;
 }
 
 static void bpf_hash_destroy(struct bpf_elf_ctx *ctx)
@@ -2924,7 +2929,9 @@ static int bpf_elf_ctx_init(struct bpf_elf_ctx *ctx, const char *pathname,
 	}
 
 	bpf_save_finfo(ctx);
-	bpf_hash_init(ctx, CONFDIR "/bpf_pinning");
+	bpf_hash_init(ctx, CONF_ETC_DIR "/bpf_pinning");
+	if (ret == -ENOENT)
+		ret = bpf_hash_init(ctx, CONF_USR_DIR "/bpf_pinning");
 
 	return 0;
 out_free:

@@ -16,11 +16,12 @@ endif
 
 PREFIX?=/usr
 SBINDIR?=/sbin
-CONFDIR?=/etc/iproute2
 NETNS_RUN_DIR?=/var/run/netns
 NETNS_ETC_DIR?=/etc/netns
 DATADIR?=$(PREFIX)/share
 HDRDIR?=$(PREFIX)/include/iproute2
+CONF_ETC_DIR?=/etc/iproute2
+CONF_USR_DIR?=$(DATADIR)/iproute2
 DOCDIR?=$(DATADIR)/doc/iproute2
 MANDIR?=$(DATADIR)/man
 ARPDDIR?=/var/lib/arpd
@@ -37,9 +38,11 @@ ifneq ($(SHARED_LIBS),y)
 DEFINES+= -DNO_SHARED_LIBS
 endif
 
-DEFINES+=-DCONFDIR=\"$(CONFDIR)\" \
+DEFINES+=-DCONF_USR_DIR=\"$(CONF_USR_DIR)\" \
+         -DCONF_ETC_DIR=\"$(CONF_ETC_DIR)\" \
          -DNETNS_RUN_DIR=\"$(NETNS_RUN_DIR)\" \
-         -DNETNS_ETC_DIR=\"$(NETNS_ETC_DIR)\"
+         -DNETNS_ETC_DIR=\"$(NETNS_ETC_DIR)\" \
+         -DCONF_COLOR=$(CONF_COLOR)
 
 #options for AX.25
 ADDLIB+=ax25_ntop.o
@@ -100,11 +103,11 @@ config.mk:
 
 install: all
 	install -m 0755 -d $(DESTDIR)$(SBINDIR)
-	install -m 0755 -d $(DESTDIR)$(CONFDIR)
+	install -m 0755 -d $(DESTDIR)$(CONF_USR_DIR)
 	install -m 0755 -d $(DESTDIR)$(ARPDDIR)
 	install -m 0755 -d $(DESTDIR)$(HDRDIR)
 	@for i in $(SUBDIRS);  do $(MAKE) -C $$i install; done
-	install -m 0644 $(shell find etc/iproute2 -maxdepth 1 -type f) $(DESTDIR)$(CONFDIR)
+	install -m 0644 $(shell find etc/iproute2 -maxdepth 1 -type f) $(DESTDIR)$(CONF_USR_DIR)
 	install -m 0755 -d $(DESTDIR)$(BASH_COMPDIR)
 	install -m 0644 bash-completion/tc $(DESTDIR)$(BASH_COMPDIR)
 	install -m 0644 bash-completion/devlink $(DESTDIR)$(BASH_COMPDIR)

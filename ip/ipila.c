@@ -47,19 +47,24 @@ static int genl_family = -1;
 
 static void print_addr64(__u64 addr, char *buff, size_t len)
 {
-	__u16 *words = (__u16 *)&addr;
+	union {
+		__u64 id64;
+		__u16 words[4];
+	} id = { .id64 = addr };
 	__u16 v;
 	int i, ret;
 	size_t written = 0;
 	char *sep = ":";
 
 	for (i = 0; i < 4; i++) {
-		v = ntohs(words[i]);
+		v = ntohs(id.words[i]);
 
 		if (i == 3)
 			sep = "";
 
 		ret = snprintf(&buff[written], len - written, "%x%s", v, sep);
+		if (ret < 0 || ret >= len - written)
+			break;
 		written += ret;
 	}
 }
@@ -150,6 +155,7 @@ static int do_list(int argc, char **argv)
 	new_json_obj(json);
 	if (rtnl_dump_filter(&genl_rth, print_ila_mapping, stdout) < 0) {
 		fprintf(stderr, "Dump terminated\n");
+		delete_json_obj();
 		return 1;
 	}
 	delete_json_obj();

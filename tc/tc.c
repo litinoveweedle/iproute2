@@ -35,7 +35,6 @@ int use_iec;
 int force;
 bool use_names;
 int json;
-int color;
 int oneline;
 int brief;
 
@@ -254,6 +253,7 @@ int main(int argc, char **argv)
 {
 	const char *libbpf_version;
 	char *batch_file = NULL;
+	int color = CONF_COLOR;
 	int ret;
 
 	while (argc > 1) {
@@ -312,7 +312,7 @@ int main(int argc, char **argv)
 			++json;
 		} else if (matches(argv[1], "-oneline") == 0) {
 			++oneline;
-		}else if (matches(argv[1], "-brief") == 0) {
+		} else if (matches(argv[1], "-brief") == 0) {
 			++brief;
 		} else {
 			fprintf(stderr,

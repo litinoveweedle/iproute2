@@ -18,6 +18,7 @@
 
 static unsigned int filter_index, filter_vlan;
 static int vlan_rtm_cur_ifidx = -1;
+static void print_vlan_info(struct rtattr *tb, int ifindex);
 
 enum vlan_show_subject {
 	VLAN_SHOW_VLAN,
@@ -38,6 +39,7 @@ static void usage(void)
 		"       bridge vlan { set } vid VLAN_ID dev DEV [ state STP_STATE ]\n"
 		"                                               [ mcast_router MULTICAST_ROUTER ]\n"
 		"                                               [ mcast_max_groups MAX_GROUPS ]\n"
+		"                                               [ neigh_suppress {on | off} ]\n"
 		"       bridge vlan { show } [ dev DEV ] [ vid VLAN_ID ]\n"
 		"       bridge vlan { tunnelshow } [ dev DEV ] [ vid VLAN_ID ]\n"
 		"       bridge vlan global { set } vid VLAN_ID dev DEV\n"
@@ -354,6 +356,18 @@ static int vlan_option_set(int argc, char **argv)
 			addattr32(&req.n, sizeof(req),
 				  BRIDGE_VLANDB_ENTRY_MCAST_MAX_GROUPS,
 				  max_groups);
+		} else if (strcmp(*argv, "neigh_suppress") == 0) {
+			bool neigh_suppress;
+			int ret;
+
+			NEXT_ARG();
+			neigh_suppress = parse_on_off("neigh_suppress", *argv,
+						      &ret);
+			if (ret)
+				return ret;
+			addattr8(&req.n, sizeof(req),
+				 BRIDGE_VLANDB_ENTRY_NEIGH_SUPPRESS,
+				 neigh_suppress);
 		} else {
 			if (matches(*argv, "help") == 0)
 				NEXT_ARG();
@@ -576,20 +590,6 @@ static void close_vlan_port(void)
 	close_json_object();
 }
 
-static unsigned int print_range(const char *name, __u32 start, __u32 id)
-{
-	char end[64];
-	int width;
-
-	snprintf(end, sizeof(end), "%sEnd", name);
-
-	width = print_uint(PRINT_ANY, name, "%u", start);
-	if (start != id)
-		width += print_uint(PRINT_ANY, end, "-%u", id);
-
-	return width;
-}
-
 static void print_vlan_tunnel_info(struct rtattr *tb, int ifindex)
 {
 	struct rtattr *i, *list = tb;
@@ -647,16 +647,8 @@ static void print_vlan_tunnel_info(struct rtattr *tb, int ifindex)
 
 		open_json_object(NULL);
 		width = print_range("vlan", last_vid_start, tunnel_vid);
-		if (width <= VLAN_ID_LEN) {
-			char buf[VLAN_ID_LEN + 1];
-
-			snprintf(buf, sizeof(buf), "%-*s",
-				 VLAN_ID_LEN - width, "");
-			print_string(PRINT_FP, NULL, "%s  ", buf);
-		} else {
-			fprintf(stderr, "BUG: vlan range too wide, %u\n",
-				width);
-		}
+		if (!is_json_context())
+			printf("%-*s  ", VLAN_ID_LEN - width, "");
 		print_range("tunid", last_tunid_start, tunnel_id);
 		close_json_object();
 		print_nl();
@@ -859,7 +851,7 @@ static void print_vlan_global_opts(struct rtattr *a, int ifindex)
 	struct rtattr *vtb[BRIDGE_VLANDB_GOPTS_MAX + 1], *vattr;
 	__u16 vid, vrange = 0;
 
-	if ((a->rta_type & NLA_TYPE_MASK) != BRIDGE_VLANDB_GLOBAL_OPTIONS)
+	if (rta_type(a) != BRIDGE_VLANDB_GLOBAL_OPTIONS)
 		return;
 
 	parse_rtattr_flags(vtb, BRIDGE_VLANDB_GOPTS_MAX, RTA_DATA(a),
@@ -968,7 +960,7 @@ static void print_vlan_opts(struct rtattr *a, int ifindex)
 	__u16 vrange = 0;
 	__u8 state = 0;
 
-	if ((a->rta_type & NLA_TYPE_MASK) != BRIDGE_VLANDB_ENTRY)
+	if (rta_type(a) != BRIDGE_VLANDB_ENTRY)
 		return;
 
 	parse_rtattr_flags(vtb, BRIDGE_VLANDB_ENTRY_MAX, RTA_DATA(a),
@@ -1041,6 +1033,11 @@ static void print_vlan_opts(struct rtattr *a, int ifindex)
 		print_uint(PRINT_ANY, "mcast_max_groups", "mcast_max_groups %u ",
 			   rta_getattr_u32(vattr));
 	}
+	if (vtb[BRIDGE_VLANDB_ENTRY_NEIGH_SUPPRESS]) {
+		vattr = vtb[BRIDGE_VLANDB_ENTRY_NEIGH_SUPPRESS];
+		print_on_off(PRINT_ANY, "neigh_suppress", "neigh_suppress %s ",
+			     rta_getattr_u8(vattr));
+	}
 	print_nl();
 	if (show_stats)
 		__print_one_vlan_stats(&vstats);
@@ -1089,14 +1086,14 @@ int print_vlan_rtm(struct nlmsghdr *n, void *arg, bool monitor, bool global_only
 
 	rem = len;
 	for (a = BRVLAN_RTA(bvm); RTA_OK(a, rem); a = RTA_NEXT(a, rem)) {
-		unsigned short rta_type = a->rta_type & NLA_TYPE_MASK;
+		unsigned short attr_type = rta_type(a);
 
 		/* skip unknown attributes */
-		if (rta_type > BRIDGE_VLANDB_MAX ||
-		    (global_only && rta_type != BRIDGE_VLANDB_GLOBAL_OPTIONS))
+		if (attr_type > BRIDGE_VLANDB_MAX ||
+		    (global_only && attr_type != BRIDGE_VLANDB_GLOBAL_OPTIONS))
 			continue;
 
-		switch (rta_type) {
+		switch (attr_type) {
 		case BRIDGE_VLANDB_ENTRY:
 			print_vlan_opts(a, bvm->ifindex);
 			break;
@@ -1291,7 +1288,7 @@ static int vlan_global_show(int argc, char **argv)
 	return 0;
 }
 
-void print_vlan_info(struct rtattr *tb, int ifindex)
+static void print_vlan_info(struct rtattr *tb, int ifindex)
 {
 	struct rtattr *i, *list = tb;
 	int rem = RTA_PAYLOAD(list);

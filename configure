@@ -5,6 +5,7 @@
 INCLUDE="$PWD/include"
 PREFIX="/usr"
 LIBDIR="\${prefix}/lib"
+COLOR="never"
 
 # Output file which is input to Makefile
 CONFIG=config.mk
@@ -23,26 +24,6 @@ check_toolchain()
     echo "AR:=${AR}" >>$CONFIG
     echo "CC:=${CC}" >>$CONFIG
     echo "YACC:=${YACC}" >>$CONFIG
-}
-
-check_atm()
-{
-    cat >$TMPDIR/atmtest.c <<EOF
-#include <atm.h>
-int main(int argc, char **argv) {
-	struct atm_qos qos;
-	(void) text2qos("aal5,ubr:sdu=9180,rx:none",&qos,0);
-	return 0;
-}
-EOF
-
-    if $CC -I$INCLUDE -o $TMPDIR/atmtest $TMPDIR/atmtest.c -latm >/dev/null 2>&1; then
-	echo "TC_CONFIG_ATM:=y" >>$CONFIG
-	echo yes
-    else
-	echo no
-    fi
-    rm -f $TMPDIR/atmtest.c $TMPDIR/atmtest
 }
 
 check_xtables()
@@ -159,35 +140,6 @@ check_lib_dir()
 	echo "LIBDIR:=$LIBDIR" >> $CONFIG
 }
 
-check_ipt()
-{
-	if ! grep TC_CONFIG_XT $CONFIG > /dev/null; then
-		echo "using iptables"
-	fi
-}
-
-check_ipt_lib_dir()
-{
-	IPT_LIB_DIR=$(${PKG_CONFIG} --variable=xtlibdir xtables)
-	if [ -n "$IPT_LIB_DIR" ]; then
-		echo $IPT_LIB_DIR
-		echo "IPT_LIB_DIR:=$IPT_LIB_DIR" >> $CONFIG
-		return
-	fi
-
-	for dir in /lib /usr/lib /usr/local/lib; do
-		for file in "xtables" "iptables"; do
-			file="$dir/$file/lib*t_*so"
-			if [ -f $file ]; then
-				echo ${file%/*}
-				echo "IPT_LIB_DIR:=${file%/*}" >> $CONFIG
-				return
-			fi
-		done
-	done
-	echo "not found!"
-}
-
 check_setns()
 {
     cat >$TMPDIR/setnstest.c <<EOF
@@ -269,8 +221,8 @@ check_elf()
 	echo "HAVE_ELF:=y" >>$CONFIG
 	echo "yes"
 
-	echo 'CFLAGS += -DHAVE_ELF' `${PKG_CONFIG} libelf --cflags` >> $CONFIG
-	echo 'LDLIBS += ' `${PKG_CONFIG} libelf --libs` >>$CONFIG
+	echo 'CFLAGS += -DHAVE_ELF' "$(${PKG_CONFIG} libelf --cflags)" >> $CONFIG
+	echo 'LDLIBS += ' "$(${PKG_CONFIG} libelf --libs)" >>$CONFIG
     else
 	echo "no"
     fi
@@ -388,8 +340,8 @@ check_selinux()
 		echo "HAVE_SELINUX:=y" >>$CONFIG
 		echo "yes"
 
-		echo 'LDLIBS +=' `${PKG_CONFIG} --libs libselinux` >>$CONFIG
-		echo 'CFLAGS += -DHAVE_SELINUX' `${PKG_CONFIG} --cflags libselinux` >>$CONFIG
+		echo 'LDLIBS +=' "$(${PKG_CONFIG} --libs libselinux)" >>$CONFIG
+		echo 'CFLAGS += -DHAVE_SELINUX' "$(${PKG_CONFIG} --cflags libselinux)" >>$CONFIG
 	else
 		echo "no"
 	fi
@@ -401,8 +353,8 @@ check_tirpc()
 		echo "HAVE_RPC:=y" >>$CONFIG
 		echo "yes"
 
-		echo 'LDLIBS +=' `${PKG_CONFIG} --libs libtirpc` >>$CONFIG
-		echo 'CFLAGS += -DHAVE_RPC' `${PKG_CONFIG} --cflags libtirpc` >>$CONFIG
+		echo 'LDLIBS +=' "$(${PKG_CONFIG} --libs libtirpc)" >>$CONFIG
+		echo 'CFLAGS += -DHAVE_RPC' "$(${PKG_CONFIG} --cflags libtirpc)" >>$CONFIG
 	else
 		echo "no"
 	fi
@@ -414,8 +366,8 @@ check_mnl()
 		echo "HAVE_MNL:=y" >>$CONFIG
 		echo "yes"
 
-		echo 'CFLAGS += -DHAVE_LIBMNL' `${PKG_CONFIG} libmnl --cflags` >>$CONFIG
-		echo 'LDLIBS +=' `${PKG_CONFIG} libmnl --libs` >> $CONFIG
+		echo 'CFLAGS += -DHAVE_LIBMNL' "$(${PKG_CONFIG} libmnl --cflags)" >>$CONFIG
+		echo 'LDLIBS +=' "$(${PKG_CONFIG} libmnl --libs)" >> $CONFIG
 	else
 		echo "no"
 	fi
@@ -444,6 +396,7 @@ EOF
 check_strlcpy()
 {
     cat >$TMPDIR/strtest.c <<EOF
+#define _GNU_SOURCE
 #include <string.h>
 int main(int argc, char **argv) {
 	char dst[10];
@@ -455,8 +408,8 @@ EOF
 	echo "no"
     else
 	if ${PKG_CONFIG} libbsd --exists; then
-		echo 'CFLAGS += -DHAVE_LIBBSD' `${PKG_CONFIG} libbsd --cflags` >>$CONFIG
-		echo 'LDLIBS +=' `${PKG_CONFIG} libbsd --libs` >> $CONFIG
+		echo 'CFLAGS += -DHAVE_LIBBSD' "$(${PKG_CONFIG} libbsd --cflags)" >>$CONFIG
+		echo 'LDLIBS +=' "$(${PKG_CONFIG} libbsd --libs)" >> $CONFIG
 		echo "no"
 	else
 		echo 'CFLAGS += -DNEED_STRLCPY' >>$CONFIG
@@ -472,11 +425,29 @@ check_cap()
 		echo "HAVE_CAP:=y" >>$CONFIG
 		echo "yes"
 
-		echo 'CFLAGS += -DHAVE_LIBCAP' `${PKG_CONFIG} libcap --cflags` >>$CONFIG
-		echo 'LDLIBS +=' `${PKG_CONFIG} libcap --libs` >> $CONFIG
+		echo 'CFLAGS += -DHAVE_LIBCAP' "$(${PKG_CONFIG} libcap --cflags)" >>$CONFIG
+		echo 'LDLIBS +=' "$(${PKG_CONFIG} libcap --libs)" >> $CONFIG
 	else
 		echo "no"
 	fi
+}
+
+check_color()
+{
+	case "$COLOR" in
+		never)
+			echo 'CONF_COLOR:=COLOR_OPT_NEVER' >> $CONFIG
+			echo 'never'
+			;;
+		auto)
+			echo 'CONF_COLOR:=COLOR_OPT_AUTO' >> $CONFIG
+			echo 'auto'
+			;;
+		always)
+			echo 'CONF_COLOR:=COLOR_OPT_ALWAYS' >> $CONFIG
+			echo 'always'
+			;;
+	esac
 }
 
 quiet_config()
@@ -509,6 +480,10 @@ usage()
 {
 	cat <<EOF
 Usage: $0 [OPTIONS]
+	--color <never|auto|always>	Default color output configuration. Available options:
+					  never: color output is disabled (default)
+					  auto: color output is enabled if stdout is a terminal
+					  always: color output is enabled regardless of stdout state
 	--include_dir <dir>		Path to iproute2 include dir
 	--libdir <dir>			Path to iproute2 lib dir
 	--libbpf_dir <dir>		Path to libbpf DESTDIR
@@ -527,6 +502,11 @@ if [ $# -eq 1 ] && [ "$(echo $1 | cut -c 1)" != '-' ]; then
 else
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
+			--color)
+				shift
+				COLOR="$1" ;;
+			--color=*)
+				COLOR="${1#*=}" ;;
 			--include_dir)
 				shift
 				INCLUDE="$1" ;;
@@ -563,6 +543,12 @@ else
 	done
 fi
 
+case "$COLOR" in
+	never) ;;
+	auto) ;;
+	always) ;;
+	*) usage 1 ;;
+esac
 [ -d "$INCLUDE" ] || usage 1
 if [ "${LIBBPF_DIR-unused}" != "unused" ]; then
 	[ -d "$LIBBPF_DIR" ] || usage 1
@@ -582,16 +568,12 @@ check_toolchain
 
 echo "TC schedulers"
 
-echo -n " ATM	"
-check_atm
-
 check_xtables
 if ! grep -q TC_CONFIG_NO_XT $CONFIG; then
 	echo -n " IPT	"
 	check_xt
 	check_xt_old
 	check_xt_old_internal_h
-	check_ipt
 
 	echo -n " IPSET  "
 	check_ipset
@@ -599,10 +581,6 @@ fi
 
 echo
 check_lib_dir
-if ! grep -q TC_CONFIG_NO_XT $CONFIG; then
-	echo -n "iptables modules directory: "
-	check_ipt_lib_dir
-fi
 
 echo -n "libc has setns: "
 check_setns
@@ -633,6 +611,9 @@ check_strlcpy
 
 echo -n "libcap support: "
 check_cap
+
+echo -n "color output: "
+check_color
 
 echo >> $CONFIG
 echo "%.o: %.c" >> $CONFIG

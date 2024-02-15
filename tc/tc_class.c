@@ -45,7 +45,7 @@ static void usage(void)
 		"\n"
 		"       tc class show [ dev STRING ] [ root | parent CLASSID ]\n"
 		"Where:\n"
-		"QDISC_KIND := { prio | cbq | etc. }\n"
+		"QDISC_KIND := { prio | etc. }\n"
 		"OPTIONS := ... try tc class add <desired QDISC_KIND> help\n");
 }
 
@@ -453,6 +453,7 @@ static int tc_class_list(int argc, char **argv)
 	new_json_obj(json);
 	if (rtnl_dump_filter(&rth, print_class, stdout) < 0) {
 		fprintf(stderr, "Dump terminated\n");
+		delete_json_obj();
 		return 1;
 	}
 	delete_json_obj();

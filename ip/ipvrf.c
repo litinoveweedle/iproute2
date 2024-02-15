@@ -24,6 +24,7 @@
 #include "utils.h"
 #include "ip_common.h"
 #include "bpf_util.h"
+#include "selinux.h"
 
 #define CGRP_PROC_FILE  "/cgroup.procs"
 
@@ -252,7 +253,8 @@ static int prog_load(int idx)
 	};
 
 	return bpf_program_load(BPF_PROG_TYPE_CGROUP_SOCK, prog, sizeof(prog),
-			        "GPL", bpf_log_buf, sizeof(bpf_log_buf));
+				"GPL", bpf_log_buf, sizeof(bpf_log_buf),
+				false);
 }
 
 static int vrf_configure_cgroup(const char *path, int ifindex)
@@ -452,6 +454,11 @@ static int ipvrf_exec(int argc, char **argv)
 	}
 	if (argc < 2) {
 		fprintf(stderr, "No command specified\n");
+		return -1;
+	}
+
+	if (is_selinux_enabled() && setexecfilecon(argv[1], "ifconfig_t")) {
+		fprintf(stderr, "setexecfilecon for \"%s\" failed\n", argv[1]);
 		return -1;
 	}
 

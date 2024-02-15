@@ -33,6 +33,7 @@
 #include "version.h"
 #include "rt_names.h"
 #include "cg_map.h"
+#include "selinux.h"
 
 #include <linux/tcp.h>
 #include <linux/unix_diag.h>
@@ -71,39 +72,6 @@
 #define BUF_CHUNKS_MAX 5	/* Maximum number of allocated buffer chunks */
 #define LEN_ALIGN(x) (((x) + 1) & ~1)
 
-#if HAVE_SELINUX
-#include <selinux/selinux.h>
-#else
-/* Stubs for SELinux functions */
-static int is_selinux_enabled(void)
-{
-	return -1;
-}
-
-static int getpidcon(pid_t pid, char **context)
-{
-	*context = NULL;
-	return -1;
-}
-
-static int getfilecon(char *path, char **context)
-{
-	*context = NULL;
-	return -1;
-}
-
-static int security_get_initial_context(char *name,  char **context)
-{
-	*context = NULL;
-	return -1;
-}
-
-static void freecon(char *context)
-{
-	free(context);
-}
-#endif
-
 int preferred_family = AF_UNSPEC;
 static int show_options;
 int show_details;
@@ -132,8 +100,8 @@ enum col_id {
 	COL_SERV,
 	COL_RADDR,
 	COL_RSERV,
-	COL_EXT,
 	COL_PROC,
+	COL_EXT,
 	COL_MAX
 };
 
@@ -242,6 +210,8 @@ enum {
 	SS_LAST_ACK,
 	SS_LISTEN,
 	SS_CLOSING,
+	SS_NEW_SYN_RECV, /* Kernel only value, not for use in user space */
+	SS_BOUND_INACTIVE,
 	SS_MAX
 };
 
@@ -627,8 +597,9 @@ static void user_ent_hash_build_task(char *path, int pid, int tid)
 
 			fp = fopen(stat, "r");
 			if (fp) {
-				if (fscanf(fp, "%*d (%[^)])", task) < 1)
+				if (fscanf(fp, "%*d (%[^)])", task) < 1) {
 					; /* ignore */
+				}
 				fclose(fp);
 			}
 		}
@@ -709,6 +680,7 @@ static void user_ent_hash_build(void)
 				snprintf(name + nameoff, sizeof(name) - nameoff, "%d/", tid);
 				user_ent_hash_build_task(name, pid, tid);
 			}
+			closedir(task_dir);
 		}
 	}
 	closedir(dir);
@@ -895,6 +867,8 @@ struct tcpstat {
 	double		    min_rtt;
 	unsigned int 	    rcv_ooopack;
 	unsigned int	    snd_wnd;
+	unsigned int	    rcv_wnd;
+	unsigned int	    rehash;
 	int		    rcv_space;
 	unsigned int        rcv_ssthresh;
 	unsigned long long  busy_time;
@@ -903,6 +877,7 @@ struct tcpstat {
 	unsigned long long  bytes_sent;
 	unsigned long long  bytes_retrans;
 	bool		    has_ts_opt;
+	bool		    has_usec_ts_opt;
 	bool		    has_sack_opt;
 	bool		    has_ecn_opt;
 	bool		    has_ecnseen_opt;
@@ -1409,6 +1384,8 @@ static void sock_state_print(struct sockstat *s)
 		[SS_LAST_ACK] = "LAST-ACK",
 		[SS_LISTEN] =	"LISTEN",
 		[SS_CLOSING] = "CLOSING",
+		[SS_NEW_SYN_RECV] = "UNDEF", /* Never returned by kernel */
+		[SS_BOUND_INACTIVE] = "UNDEF", /* Never returned by kernel */
 	};
 
 	switch (s->local.family) {
@@ -1732,7 +1709,7 @@ static void inet_addr_print(const inet_prefix *a, int port,
 
 struct aafilter {
 	inet_prefix	addr;
-	int		port;
+	long		port;
 	unsigned int	iface;
 	__u32		mark;
 	__u32		mask;
@@ -2255,7 +2232,7 @@ void *parse_hostcond(char *addr, bool is_port)
 		port = find_port(addr, is_port);
 		if (port) {
 			if (*port && strcmp(port, "*")) {
-				if (get_integer(&a.port, port, 0)) {
+				if (get_long(&a.port, port, 0)) {
 					if ((a.port = xll_name_to_index(port)) <= 0)
 						return NULL;
 				}
@@ -2278,7 +2255,7 @@ void *parse_hostcond(char *addr, bool is_port)
 		port = find_port(addr, is_port);
 		if (port) {
 			if (*port && strcmp(port, "*")) {
-				if (get_integer(&a.port, port, 0)) {
+				if (get_long(&a.port, port, 0)) {
 					if (strcmp(port, "kernel") == 0)
 						a.port = 0;
 					else
@@ -2334,7 +2311,7 @@ void *parse_hostcond(char *addr, bool is_port)
 			*port++ = 0;
 
 		if (*port && *port != '*') {
-			if (get_integer(&a.port, port, 0)) {
+			if (get_long(&a.port, port, 0)) {
 				struct servent *se1 = NULL;
 				struct servent *se2 = NULL;
 
@@ -2450,6 +2427,8 @@ static void proc_ctx_print(struct sockstat *s)
 			free(buf);
 		}
 	}
+
+	field_next();
 }
 
 static void inet_stats_print(struct sockstat *s, bool v6only)
@@ -2590,6 +2569,8 @@ static void tcp_stats_print(struct tcpstat *s)
 
 	if (s->has_ts_opt)
 		out(" ts");
+	if (s->has_usec_ts_opt)
+		out(" usec_ts");
 	if (s->has_sack_opt)
 		out(" sack");
 	if (s->has_ecn_opt)
@@ -2741,6 +2722,10 @@ static void tcp_stats_print(struct tcpstat *s)
 		out(" rcv_ooopack:%u", s->rcv_ooopack);
 	if (s->snd_wnd)
 		out(" snd_wnd:%u", s->snd_wnd);
+	if (s->rcv_wnd)
+		out(" rcv_wnd:%u", s->rcv_wnd);
+	if (s->rehash)
+		out(" rehash:%u", s->rehash);
 }
 
 static void tcp_timer_print(struct tcpstat *s)
@@ -2982,12 +2967,6 @@ static void tcp_tls_conf(const char *name, struct rtattr *attr)
 	}
 }
 
-static void tcp_tls_zc_sendfile(struct rtattr *attr)
-{
-	if (attr)
-		out(" zc_ro_tx");
-}
-
 static void mptcp_subflow_info(struct rtattr *tb[])
 {
 	u_int32_t flags = 0;
@@ -3067,6 +3046,7 @@ static void tcp_show_info(const struct nlmsghdr *nlh, struct inet_diag_msg *r,
 
 		if (show_options) {
 			s.has_ts_opt	   = TCPI_HAS_OPT(info, TCPI_OPT_TIMESTAMPS);
+			s.has_usec_ts_opt  = TCPI_HAS_OPT(info, TCPI_OPT_USEC_TS);
 			s.has_sack_opt	   = TCPI_HAS_OPT(info, TCPI_OPT_SACK);
 			s.has_ecn_opt	   = TCPI_HAS_OPT(info, TCPI_OPT_ECN);
 			s.has_ecnseen_opt  = TCPI_HAS_OPT(info, TCPI_OPT_ECN_SEEN);
@@ -3183,6 +3163,8 @@ static void tcp_show_info(const struct nlmsghdr *nlh, struct inet_diag_msg *r,
 		s.bytes_retrans = info->tcpi_bytes_retrans;
 		s.rcv_ooopack = info->tcpi_rcv_ooopack;
 		s.snd_wnd = info->tcpi_snd_wnd;
+		s.rcv_wnd = info->tcpi_rcv_wnd;
+		s.rehash = info->tcpi_rehash;
 		tcp_stats_print(&s);
 		free(s.dctcp);
 		free(s.bbr_info);
@@ -3218,7 +3200,10 @@ static void tcp_show_info(const struct nlmsghdr *nlh, struct inet_diag_msg *r,
 			tcp_tls_cipher(tlsinfo[TLS_INFO_CIPHER]);
 			tcp_tls_conf("rxconf", tlsinfo[TLS_INFO_RXCONF]);
 			tcp_tls_conf("txconf", tlsinfo[TLS_INFO_TXCONF]);
-			tcp_tls_zc_sendfile(tlsinfo[TLS_INFO_ZC_RO_TX]);
+			if (!!tlsinfo[TLS_INFO_ZC_RO_TX])
+				out(" zc_ro_tx");
+			if (!!tlsinfo[TLS_INFO_RX_NO_PAD])
+				out(" no_pad_rx");
 		}
 		if (ulpinfo[INET_ULP_INFO_MPTCP]) {
 			struct rtattr *sfinfo[MPTCP_SUBFLOW_ATTR_MAX + 1] =
@@ -3234,17 +3219,17 @@ static void tcp_show_info(const struct nlmsghdr *nlh, struct inet_diag_msg *r,
 static void mptcp_stats_print(struct mptcp_info *s)
 {
 	if (s->mptcpi_subflows)
-		out(" subflows:%d", s->mptcpi_subflows);
+		out(" subflows:%u", s->mptcpi_subflows);
 	if (s->mptcpi_add_addr_signal)
-		out(" add_addr_signal:%d", s->mptcpi_add_addr_signal);
+		out(" add_addr_signal:%u", s->mptcpi_add_addr_signal);
 	if (s->mptcpi_add_addr_accepted)
-		out(" add_addr_accepted:%d", s->mptcpi_add_addr_accepted);
+		out(" add_addr_accepted:%u", s->mptcpi_add_addr_accepted);
 	if (s->mptcpi_subflows_max)
-		out(" subflows_max:%d", s->mptcpi_subflows_max);
+		out(" subflows_max:%u", s->mptcpi_subflows_max);
 	if (s->mptcpi_add_addr_signal_max)
-		out(" add_addr_signal_max:%d", s->mptcpi_add_addr_signal_max);
+		out(" add_addr_signal_max:%u", s->mptcpi_add_addr_signal_max);
 	if (s->mptcpi_add_addr_accepted_max)
-		out(" add_addr_accepted_max:%d", s->mptcpi_add_addr_accepted_max);
+		out(" add_addr_accepted_max:%u", s->mptcpi_add_addr_accepted_max);
 	if (s->mptcpi_flags & MPTCP_INFO_FLAG_FALLBACK)
 		out(" fallback");
 	if (s->mptcpi_flags & MPTCP_INFO_FLAG_REMOTE_KEY_RECEIVED)
@@ -3252,11 +3237,29 @@ static void mptcp_stats_print(struct mptcp_info *s)
 	if (s->mptcpi_token)
 		out(" token:%x", s->mptcpi_token);
 	if (s->mptcpi_write_seq)
-		out(" write_seq:%llx", s->mptcpi_write_seq);
+		out(" write_seq:%llu", s->mptcpi_write_seq);
 	if (s->mptcpi_snd_una)
-		out(" snd_una:%llx", s->mptcpi_snd_una);
+		out(" snd_una:%llu", s->mptcpi_snd_una);
 	if (s->mptcpi_rcv_nxt)
-		out(" rcv_nxt:%llx", s->mptcpi_rcv_nxt);
+		out(" rcv_nxt:%llu", s->mptcpi_rcv_nxt);
+	if (s->mptcpi_local_addr_used)
+		out(" local_addr_used:%u", s->mptcpi_local_addr_used);
+	if (s->mptcpi_local_addr_max)
+		out(" local_addr_max:%u", s->mptcpi_local_addr_max);
+	if (s->mptcpi_csum_enabled)
+		out(" csum_enabled:%u", s->mptcpi_csum_enabled);
+	if (s->mptcpi_retransmits)
+		out(" retransmits:%u", s->mptcpi_retransmits);
+	if (s->mptcpi_bytes_retrans)
+		out(" bytes_retrans:%llu", s->mptcpi_bytes_retrans);
+	if (s->mptcpi_bytes_sent)
+		out(" bytes_sent:%llu", s->mptcpi_bytes_sent);
+	if (s->mptcpi_bytes_received)
+		out(" bytes_received:%llu", s->mptcpi_bytes_received);
+	if (s->mptcpi_bytes_acked)
+		out(" bytes_acked:%llu", s->mptcpi_bytes_acked);
+	if (s->mptcpi_subflows_total)
+		out(" subflows_total:%u", s->mptcpi_subflows_total);
 }
 
 static void mptcp_show_info(const struct nlmsghdr *nlh, struct inet_diag_msg *r,
@@ -4072,9 +4075,9 @@ static void unix_stats_print(struct sockstat *s, struct filter *f)
 	sock_state_print(s);
 
 	sock_addr_print(s->name ?: "*", " ",
-			int_to_str(s->lport, port_name), NULL);
+			uint_to_str(s->lport, port_name), NULL);
 	sock_addr_print(s->peer_name ?: "*", " ",
-			int_to_str(s->rport, port_name), NULL);
+			uint_to_str(s->rport, port_name), NULL);
 
 	proc_ctx_print(s);
 }
@@ -4537,9 +4540,9 @@ static int packet_show_line(char *buf, const struct filter *f, int fam)
 			&type, &prot, &iface, &state,
 			&rq, &uid, &ino);
 
-	if (stat.type == SOCK_RAW && !(f->dbs&(1<<PACKET_R_DB)))
+	if (type == SOCK_RAW && !(f->dbs & (1<<PACKET_R_DB)))
 		return 0;
-	if (stat.type == SOCK_DGRAM && !(f->dbs&(1<<PACKET_DG_DB)))
+	if (type == SOCK_DGRAM && !(f->dbs & (1<<PACKET_DG_DB)))
 		return 0;
 
 	stat.type  = type;
@@ -5342,6 +5345,7 @@ static void _usage(FILE *dest)
 "   -r, --resolve       resolve host names\n"
 "   -a, --all           display all sockets\n"
 "   -l, --listening     display listening sockets\n"
+"   -B, --bound-inactive display TCP bound but inactive sockets\n"
 "   -o, --options       show timer information\n"
 "   -e, --extended      show detailed socket information\n"
 "   -m, --memory        show socket memory usage\n"
@@ -5424,8 +5428,16 @@ static int scan_state(const char *state)
 		[SS_LAST_ACK] = "last-ack",
 		[SS_LISTEN] =	"listening",
 		[SS_CLOSING] = "closing",
+		[SS_NEW_SYN_RECV] = "new-syn-recv",
+		[SS_BOUND_INACTIVE] = "bound-inactive",
 	};
 	int i;
+
+	/* NEW_SYN_RECV is a kernel implementation detail. It shouldn't be used
+	 * or even be visible by users.
+	 */
+	if (strcasecmp(state, "new-syn-recv") == 0)
+		goto wrong_state;
 
 	if (strcasecmp(state, "close") == 0 ||
 	    strcasecmp(state, "closed") == 0)
@@ -5449,6 +5461,7 @@ static int scan_state(const char *state)
 			return (1<<i);
 	}
 
+wrong_state:
 	fprintf(stderr, "ss: wrong state name: %s\n", state);
 	exit(-1);
 }
@@ -5490,6 +5503,7 @@ static const struct option long_opts[] = {
 	{ "vsock", 0, 0, OPT_VSOCK },
 	{ "all", 0, 0, 'a' },
 	{ "listening", 0, 0, 'l' },
+	{ "bound-inactive", 0, 0, 'B' },
 	{ "ipv4", 0, 0, '4' },
 	{ "ipv6", 0, 0, '6' },
 	{ "packet", 0, 0, '0' },
@@ -5528,7 +5542,7 @@ int main(int argc, char *argv[])
 	int state_filter = 0;
 
 	while ((ch = getopt_long(argc, argv,
-				 "dhaletuwxnro460spTbEf:mMiA:D:F:vVzZN:KHSO",
+				 "dhalBetuwxnro460spTbEf:mMiA:D:F:vVzZN:KHSO",
 				 long_opts, NULL)) != EOF) {
 		switch (ch) {
 		case 'n':
@@ -5592,6 +5606,9 @@ int main(int argc, char *argv[])
 			break;
 		case 'l':
 			state_filter = (1 << SS_LISTEN) | (1 << SS_CLOSE);
+			break;
+		case 'B':
+			state_filter = 1 << SS_BOUND_INACTIVE;
 			break;
 		case '4':
 			filter_af_set(&current_filter, AF_INET);
@@ -5684,7 +5701,7 @@ int main(int argc, char *argv[])
 			show_sock_ctx++;
 			/* fall through */
 		case 'Z':
-			if (is_selinux_enabled() <= 0) {
+			if (!is_selinux_enabled()) {
 				fprintf(stderr, "ss: SELinux is not enabled.\n");
 				exit(1);
 			}
@@ -5803,6 +5820,9 @@ int main(int argc, char *argv[])
 
 	if (ssfilter_parse(&current_filter.f, argc, argv, filter_fp))
 		usage();
+
+	if (!show_processes)
+		columns[COL_PROC].disabled = 1;
 
 	if (!(current_filter.dbs & (current_filter.dbs - 1)))
 		columns[COL_NETID].disabled = 1;

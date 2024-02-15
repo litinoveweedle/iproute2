@@ -49,7 +49,7 @@ ip-link \- network device configuration
 .IR BYTES " ]"
 .br
 .RB "[ " netns " {"
-.IR PID " | " NETNSNAME " } ]"
+.IR PID " | " NETNSNAME " | " NETNSFILE " } ]"
 .br
 .BI type " TYPE"
 .RI "[ " ARGS " ]"
@@ -118,7 +118,7 @@ ip-link \- network device configuration
 .IR MTU " ]"
 .br
 .RB "[ " netns " {"
-.IR PID " | " NETNSNAME " } ]"
+.IR PID " | " NETNSNAME " | " NETNSFILE " } ]"
 .br
 .RB "[ " link-netnsid
 .IR ID " ]"
@@ -247,6 +247,7 @@ ip-link \- network device configuration
 .BR macvlan  " | "
 .BR macvtap  " | "
 .BR netdevsim " |"
+.BR netkit " |"
 .BR nlmon " |"
 .BR rmnet " |"
 .BR sit " |"
@@ -384,6 +385,9 @@ Link types:
 .BR netdevsim
 - Interface for netdev API tests
 .sp
+.BR netkit
+- BPF-programmable network device
+.sp
 .BR nlmon
 - Netlink monitoring device
 .sp
@@ -465,8 +469,15 @@ specifies the desired index of the new virtual device. The link
 creation fails, if the index is busy.
 
 .TP
-.BI netns " { PID | NAME } "
-specifies the desired network namespace to create interface in.
+.B netns
+.RI "{ " PID " | " NETNSNAME " | " NETNSFILE " }"
+.br
+create the device in the network namespace associated with process
+.IR "PID " or
+the name
+.IR "NETNSNAME " or
+the file
+.IR "NETNSFILE".
 
 .TP
 VLAN Type Support
@@ -627,6 +638,8 @@ the following additional arguments are supported:
 ] [
 .RB [ no ] udp6zerocsumrx
 ] [
+.RB [ no ] localbypass
+] [
 .BI ageing " SECONDS "
 ] [
 .BI maxaddress " NUMBER "
@@ -736,6 +749,14 @@ are entered into the VXLAN device forwarding database.
 - allow incoming UDP packets over IPv6 with zero checksum field.
 
 .sp
+.RB [ no ] localbypass
+- if FDB destination is local, with nolocalbypass set, forward encapsulated
+packets to the userspace network stack. If there is a userspace process
+listening for these packets, it will have a chance to process them. If
+localbypass is active (default), bypass the kernel network stack and
+inject the packets into the target VXLAN device, assuming one exists.
+
+.sp
 .BI ageing " SECONDS"
 - specifies the lifetime in seconds of FDB entries learnt by the kernel.
 
@@ -828,6 +849,46 @@ the following additional arguments are supported:
 - specifies the virtual pair device name of the
 .I VETH/VXCAN
 tunnel.
+
+.in -8
+
+.TP
+netkit Type Support
+For a link of type
+.I netkit
+the following additional arguments are supported:
+
+.BI "ip link add " DEVICE
+.BR type " netkit "
+[
+.BI mode " MODE "
+] [
+.I "POLICY "
+] [
+.BR peer
+[
+.I "POLICY "
+] [
+.I "NAME "
+] ]
+
+.in +8
+
+.sp
+.BI mode " MODE"
+- specifies the operation mode of the netkit device with "l3" and "l2"
+as possible values. Default option is "l3".
+
+.sp
+.I "POLICY"
+- specifies the default device policy when no BPF programs are attached
+with "forward" and "blackhole" as possible values. Default option is
+"forward". Specifying policy before the peer option refers to the primary
+device, after the peer option refers to the peer device.
+
+.sp
+.I "NAME"
+- specifies the device name of the peer device.
 
 .in -8
 
@@ -1479,6 +1540,7 @@ the following additional arguments are supported:
 .BR mode " { " private " | " vepa " | " bridge " | " passthru
 .RB " [ " nopromisc " ] | " source " [ " nodst " ] } "
 .RB " [ " bcqueuelen " { " LENGTH " } ] "
+.RB " [ " bclim " " LIMIT " ] "
 
 .in +8
 .sp
@@ -1537,6 +1599,13 @@ will be the maximum length that any macvlan interface has requested.
 When listing device parameters both the bcqueuelen parameter
 as well as the actual used bcqueuelen are listed to better help
 the user understand the setting.
+
+.BR bclim " " LIMIT
+- Set the threshold for broadcast queueing.
+.BR LIMIT " must be a 32-bit integer."
+Setting this to -1 disables broadcast queueing altogether.  Otherwise
+a multicast address will be queued as broadcast if the number of devices
+using it is greater than the given value.
 .in -8
 
 .TP
@@ -1604,6 +1673,8 @@ the following additional arguments are supported:
 .BI priority " PRIORITY "
 ] [
 .BI no_linklocal_learn " NO_LINKLOCAL_LEARN "
+] [
+.BI fdb_max_learned " FDB_MAX_LEARNED "
 ] [
 .BI vlan_filtering " VLAN_FILTERING "
 ] [
@@ -1715,6 +1786,14 @@ or off
 .RI ( NO_LINKLOCAL_LEARN " > 0). "
 When disabled, the bridge will not learn from link-local frames (default:
 enabled).
+
+.BI fdb_max_learned " FDB_MAX_LEARNED "
+- set the maximum number of learned FDB entries. If
+.RI ( FDB_MAX_LEARNED " == 0) "
+the feature is disabled. Default is
+.BR 0 .
+.I FDB_MAX_LEARNED
+is a 32bit unsigned integer.
 
 .BI vlan_filtering " VLAN_FILTERING "
 - turn VLAN filtering on
@@ -2188,10 +2267,15 @@ the interface is
 .IR "POINTOPOINT" .
 
 .TP
-.BI netns " NETNSNAME " \fR| " PID"
-move the device to the network namespace associated with name
+.B netns
+.RI "{ " PID " | " NETNSNAME " | " NETNSFILE " }"
+.br
+move the device to the network namespace associated with process
+.IR "PID " or
+the name
 .IR "NETNSNAME " or
-.RI process " PID".
+the file
+.IR "NETNSFILE".
 
 Some devices are not allowed to change network namespace: loopback, bridge,
 wireless. These are network namespace local devices. In such case
@@ -2220,8 +2304,9 @@ give the device a symbolic name for easy reference.
 .TP
 .BI group " GROUP"
 specify the group the device belongs to.
-The available groups are listed in file
-.BR "@SYSCONFDIR@/group" .
+The available groups are listed in
+.BR @SYSCONF_USR_DIR@/group " or " @SYSCONF_ETC_DIR@/group
+(has precedence if exists).
 
 .TP
 .BI vf " NUM"
@@ -2497,6 +2582,8 @@ the following additional arguments are supported:
 ] [
 .BR neigh_suppress " { " on " | " off " }"
 ] [
+.BR neigh_vlan_suppress " { " on " | " off " }"
+] [
 .BR vlan_tunnel " { " on " | " off " }"
 ] [
 .BR isolated " { " on " | " off " }"
@@ -2507,7 +2594,10 @@ the following additional arguments are supported:
 ] [
 .BR backup_port " DEVICE"
 ] [
-.BR nobackup_port " ]"
+.BR nobackup_port
+] [
+.BR backup_nhid " NHID"
+]
 
 .in +8
 .sp
@@ -2602,6 +2692,12 @@ this port).
 - controls whether neigh discovery (arp and nd) proxy and suppression
 is enabled on the port. By default this flag is off.
 
+.BR neigh_vlan_suppress " { " on " | " off " }"
+- controls whether per-VLAN neigh discovery (arp and nd) proxy and suppression
+is enabled on the port. When on, the \fBbridge link\fR option
+\fBneigh_suppress\fR has no effect and the per-VLAN state is set using the
+\fBbridge vlan\fR option \fBneigh_suppress\fR. By default this flag is off.
+
 .BR vlan_tunnel " { " on " | " off " }"
 - controls whether vlan to tunnel mapping is enabled on the port. By
 default this flag is off.
@@ -2639,6 +2735,12 @@ configured backup port
 
 .BR nobackup_port
 - removes the currently configured backup port
+
+.BI backup_nhid " NHID"
+- the FDB nexthop object ID (see \fBip-nexthop\fR(8)) to attach to packets
+being redirected to a backup port that has VLAN tunnel mapping enabled (via the
+\fBvlan_tunnel\fR option). Setting a value of 0 (default) has the effect of not
+attaching any ID.
 
 .in -8
 
@@ -2699,6 +2801,9 @@ Update the broadcast/multicast queue length.
 [
 .BI bcqueuelen "  LENGTH  "
 ]
+[
+.BI bclim " LIMIT "
+]
 
 .in +8
 .BI bcqueuelen " LENGTH "
@@ -2712,6 +2817,13 @@ will be the maximum length that any macvlan interface has requested.
 When listing device parameters both the bcqueuelen parameter
 as well as the actual used bcqueuelen are listed to better help
 the user understand the setting.
+
+.BI bclim " LIMIT "
+- Set the threshold for broadcast queueing.
+.IR LIMIT " must be a 32-bit integer."
+Setting this to -1 disables broadcast queueing altogether.  Otherwise
+a multicast address will be queued as broadcast if the number of devices
+using it is greater than the given value.
 .in -8
 
 .TP
@@ -2731,7 +2843,7 @@ are supported:
 locally terminated traffic for the given DSA switch user port. For a
 description of which network interfaces are suitable for serving as conduit
 interfaces of this user port, please see
-https://www.kernel.org/doc/html/latest/networking/dsa/configuration.html#affinity-of-user-ports-to-cpu-ports
+https://docs.kernel.org/networking/dsa/configuration.html#affinity-of-user-ports-to-cpu-ports
 as well as what is supported by the driver in use.
 
 .sp
@@ -2803,9 +2915,9 @@ specifies which help of link type to display.
 
 .SS
 .I GROUP
-may be a number or a string from the file
-.B @SYSCONFDIR@/group
-which can be manually filled.
+may be a number or a string from
+.BR @SYSCONF_USR_DIR@/group " or " @SYSCONF_ETC_DIR@/group
+which can be manually filled and has precedence if exists.
 
 .SH "EXAMPLES"
 .PP

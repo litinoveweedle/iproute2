@@ -17,7 +17,8 @@
 #include "utils.h"
 #include "br_common.h"
 
-static unsigned int filter_index;
+static unsigned int filter_dev_index;
+static unsigned int filter_master_index;
 
 static const char *stp_states[] = {
 	[BR_STATE_DISABLED] = "disabled",
@@ -165,6 +166,14 @@ static void print_protinfo(FILE *fp, struct rtattr *attr)
 		if (prtb[IFLA_BRPORT_NEIGH_SUPPRESS])
 			print_on_off(PRINT_ANY, "neigh_suppress", "neigh_suppress %s ",
 				     rta_getattr_u8(prtb[IFLA_BRPORT_NEIGH_SUPPRESS]));
+		if (prtb[IFLA_BRPORT_NEIGH_VLAN_SUPPRESS]) {
+			struct rtattr *at;
+
+			at = prtb[IFLA_BRPORT_NEIGH_VLAN_SUPPRESS];
+			print_on_off(PRINT_ANY, "neigh_vlan_suppress",
+				     "neigh_vlan_suppress %s ",
+				     rta_getattr_u8(at));
+		}
 		if (prtb[IFLA_BRPORT_VLAN_TUNNEL])
 			print_on_off(PRINT_ANY, "vlan_tunnel", "vlan_tunnel %s ",
 				     rta_getattr_u8(prtb[IFLA_BRPORT_VLAN_TUNNEL]));
@@ -177,6 +186,10 @@ static void print_protinfo(FILE *fp, struct rtattr *attr)
 				     "backup_port", "backup_port %s ",
 				     ll_index_to_name(ifidx));
 		}
+
+		if (prtb[IFLA_BRPORT_BACKUP_NHID])
+			print_uint(PRINT_ANY, "backup_nhid", "backup_nhid %u ",
+				   rta_getattr_u32(prtb[IFLA_BRPORT_BACKUP_NHID]));
 
 		if (prtb[IFLA_BRPORT_ISOLATED])
 			print_on_off(PRINT_ANY, "isolated", "isolated %s ",
@@ -236,10 +249,14 @@ int print_linkinfo(struct nlmsghdr *n, void *arg)
 	if (!(ifi->ifi_family == AF_BRIDGE || ifi->ifi_family == AF_UNSPEC))
 		return 0;
 
-	if (filter_index && filter_index != ifi->ifi_index)
+	if (filter_dev_index && filter_dev_index != ifi->ifi_index)
 		return 0;
 
 	parse_rtattr_flags(tb, IFLA_MAX, IFLA_RTA(ifi), len, NLA_F_NESTED);
+
+	if (filter_master_index && tb[IFLA_MASTER] &&
+	    filter_master_index != rta_getattr_u32(tb[IFLA_MASTER]))
+		return 0;
 
 	name = get_ifname_rta(ifi->ifi_index, tb[IFLA_IFNAME]);
 	if (!name)
@@ -296,14 +313,16 @@ static void usage(void)
 		"                               [ mcast_to_unicast {on | off} ]\n"
 		"                               [ mcast_max_groups MAX_GROUPS ]\n"
 		"                               [ neigh_suppress {on | off} ]\n"
+		"                               [ neigh_vlan_suppress {on | off} ]\n"
 		"                               [ vlan_tunnel {on | off} ]\n"
 		"                               [ isolated {on | off} ]\n"
 		"                               [ locked {on | off} ]\n"
 		"                               [ mab {on | off} ]\n"
 		"                               [ hwmode {vepa | veb} ]\n"
 		"                               [ backup_port DEVICE ] [ nobackup_port ]\n"
+		"                               [ backup_nhid NHID ]\n"
 		"                               [ self ] [ master ]\n"
-		"       bridge link show [dev DEV]\n");
+		"       bridge link show [dev DEV] [master DEVICE]\n");
 	exit(-1);
 }
 
@@ -320,8 +339,11 @@ static int brlink_modify(int argc, char **argv)
 		.ifm.ifi_family = PF_BRIDGE,
 	};
 	char *d = NULL;
+	bool backup_nhid_set = false;
+	__u32 backup_nhid;
 	int backup_port_idx = -1;
 	__s8 neigh_suppress = -1;
+	__s8 neigh_vlan_suppress = -1;
 	__s8 learning = -1;
 	__s8 learning_sync = -1;
 	__s8 flood = -1;
@@ -447,6 +469,12 @@ static int brlink_modify(int argc, char **argv)
 			neigh_suppress = parse_on_off("neigh_suppress", *argv, &ret);
 			if (ret)
 				return ret;
+		} else if (strcmp(*argv, "neigh_vlan_suppress") == 0) {
+			NEXT_ARG();
+			neigh_vlan_suppress = parse_on_off("neigh_vlan_suppress",
+							   *argv, &ret);
+			if (ret)
+				return ret;
 		} else if (strcmp(*argv, "vlan_tunnel") == 0) {
 			NEXT_ARG();
 			vlan_tunnel = parse_on_off("vlan_tunnel", *argv, &ret);
@@ -477,6 +505,11 @@ static int brlink_modify(int argc, char **argv)
 			}
 		} else if (strcmp(*argv, "nobackup_port") == 0) {
 			backup_port_idx = 0;
+		} else if (strcmp(*argv, "backup_nhid") == 0) {
+			NEXT_ARG();
+			if (get_u32(&backup_nhid, *argv, 0))
+				invarg("invalid backup_nhid", *argv);
+			backup_nhid_set = true;
 		} else {
 			usage();
 		}
@@ -544,6 +577,9 @@ static int brlink_modify(int argc, char **argv)
 	if (neigh_suppress != -1)
 		addattr8(&req.n, sizeof(req), IFLA_BRPORT_NEIGH_SUPPRESS,
 			 neigh_suppress);
+	if (neigh_vlan_suppress != -1)
+		addattr8(&req.n, sizeof(req), IFLA_BRPORT_NEIGH_VLAN_SUPPRESS,
+			 neigh_vlan_suppress);
 	if (vlan_tunnel != -1)
 		addattr8(&req.n, sizeof(req), IFLA_BRPORT_VLAN_TUNNEL,
 			 vlan_tunnel);
@@ -559,6 +595,10 @@ static int brlink_modify(int argc, char **argv)
 	if (backup_port_idx != -1)
 		addattr32(&req.n, sizeof(req), IFLA_BRPORT_BACKUP_PORT,
 			  backup_port_idx);
+
+	if (backup_nhid_set)
+		addattr32(&req.n, sizeof(req), IFLA_BRPORT_BACKUP_NHID,
+			  backup_nhid);
 
 	addattr_nest_end(&req.n, nest);
 
@@ -588,6 +628,7 @@ static int brlink_modify(int argc, char **argv)
 static int brlink_show(int argc, char **argv)
 {
 	char *filter_dev = NULL;
+	char *filter_master = NULL;
 
 	while (argc > 0) {
 		if (strcmp(*argv, "dev") == 0) {
@@ -596,13 +637,24 @@ static int brlink_show(int argc, char **argv)
 				duparg("dev", *argv);
 			filter_dev = *argv;
 		}
+		if (strcmp(*argv, "master") == 0) {
+			NEXT_ARG();
+			if (filter_master)
+				duparg("master", *argv);
+			filter_master = *argv;
+		}
 		argc--; argv++;
 	}
 
 	if (filter_dev) {
-		filter_index = ll_name_to_index(filter_dev);
-		if (!filter_index)
+		filter_dev_index = ll_name_to_index(filter_dev);
+		if (!filter_dev_index)
 			return nodev(filter_dev);
+	}
+	if (filter_master) {
+		filter_master_index = ll_name_to_index(filter_master);
+		if (!filter_master_index)
+			return nodev(filter_master);
 	}
 
 	if (rtnl_linkdump_req(&rth, PF_BRIDGE) < 0) {
